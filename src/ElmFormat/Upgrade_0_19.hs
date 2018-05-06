@@ -14,8 +14,8 @@ import qualified Reporting.Annotation as RA
 import qualified Reporting.Region as Region
 
 
-transform :: Expr -> Expr
-transform expr =
+transform :: Dict.Map LowercaseIdentifier [UppercaseIdentifier] -> Expr -> Expr
+transform exposed expr =
     let
         basicsReplacements =
             Dict.fromList
@@ -87,9 +87,42 @@ transform expr =
         App (A _ (VarExpr var)) args multiline ->
             Maybe.fromMaybe expr $ fmap (\new -> applyLambda (noRegion new) args multiline) $ replace var
 
+        ExplicitList terms' trailing multiline ->
+            let styleExposed = Dict.lookup (LowercaseIdentifier "style") exposed == Just (fmap UppercaseIdentifier ["Html", "Attributes"])
+            in
+            noRegion $ ExplicitList (concat $ fmap (expandHtmlStyle styleExposed) $ terms') trailing multiline
+
         _ ->
             expr
 
+
+expandHtmlStyle :: Bool -> (Comments, PreCommented (WithEol Expr)) -> [(Comments, PreCommented (WithEol Expr))]
+expandHtmlStyle styleExposed (preComma, (pre, (term, eol))) =
+    let
+        lambda fRef =
+            Lambda
+                [([], noRegion $ AST.Pattern.Tuple [makeArg' "a", makeArg' "b"]) ] []
+                (noRegion $ App
+                    (noRegion $ VarExpr $ fRef)
+                    [ ([], makeVarRef "a")
+                    , ([], makeVarRef "b")
+                    ]
+                    (FAJoinFirst JoinAll)
+                )
+                False
+
+        isHtmlAttributesStyle var =
+            case var of
+                VarRef [UppercaseIdentifier "Html", UppercaseIdentifier "Attributes"] (LowercaseIdentifier "style") -> True
+                VarRef [] (LowercaseIdentifier "style") -> styleExposed
+                _ -> False
+    in
+    case RA.drop term of
+        App (A _ (VarExpr var)) [(xx, A _ (ExplicitList styles trailing multiline))] _ | isHtmlAttributesStyle var ->
+            fmap (\(preComma', (pre', (style, eol'))) -> (preComma', (pre', (applyLambda (noRegion $ lambda var) [([], style)] (FAJoinFirst JoinAll), eol')))) styles
+
+        _ ->
+            [(preComma, (pre, (term, eol)))]
 
 --
 -- Generic helpers
