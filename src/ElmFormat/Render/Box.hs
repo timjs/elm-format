@@ -1254,21 +1254,13 @@ formatExpression' elmVersion importInfo context aexpr =
                 formatIf if'
                     |> andThen (map formatElseIf elseifs)
                     |> andThen
-                        [ blankLine
-                        , line $ keyword "else"
+                        [ line $ keyword "else"
                         , indent $ formatCommented_ True (formatExpression elmVersion importInfo SyntaxSeparated) (AST.Commented elsComments els [])
                         ]
                     |> expressionParens AmbiguousEnd context
 
         AST.Expression.Let defs bodyComments expr ->
             let
-                spacer first _ =
-                    case first of
-                        AST.Expression.LetDefinition _ _ _ _ ->
-                            [ blankLine ]
-                        _ ->
-                            []
-
                 formatDefinition' def =
                   case def of
                     AST.Expression.LetDefinition name args comments expr' ->
@@ -1283,7 +1275,7 @@ formatExpression' elmVersion importInfo context aexpr =
                 (line $ keyword "let")
                     |> andThen
                         (defs
-                            |> intersperseMap spacer formatDefinition'
+                            |> map formatDefinition'
                             |> map indent
                         )
                     |> andThen
@@ -1351,7 +1343,6 @@ formatExpression' elmVersion importInfo context aexpr =
                     |> andThen
                         (clauses
                             |> map clause
-                            |> List.intersperse blankLine
                             |> map indent
                         )
                     |> expressionParens AmbiguousEnd context -- TODO: not tested
