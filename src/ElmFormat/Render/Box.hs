@@ -1319,8 +1319,14 @@ formatExpression' elmVersion importInfo context aexpr =
                       , formatHeadCommentedStack (formatExpression elmVersion importInfo SyntaxSeparated) expr
                       )
                     of
-                        (_, _, SingleLine pat', SingleLine body') ->
-                             line $ row [ pat', space, keyword "->", space, body' ]
+                        (_, _, SingleLine pat', body@(SingleLine body')) ->
+                            if lineLength 0 body' <= lineLength 0 pat' then
+                              line $ row [ pat', space, keyword "->", space, body' ]
+                            else --NOTE: Same as multiline below
+                              stack1
+                                [ line $ row [ pat', space, keyword "->"]
+                                , indent body
+                                ]
                         (_, _, SingleLine pat', body') ->
                             stack1
                                 [ line $ row [ pat', space, keyword "->"]
