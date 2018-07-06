@@ -5,3 +5,8 @@
 *.tix
 /.stack-work/
 /tests/elm-format
+
+dist/
+dist-newstyle/
+
+cabal.project.local
