@@ -1,4 +1,6 @@
-module AllSyntax.Expressions exposing (binary, caseStatement, emptyList, emptyRecord, functionApplication, functionApplicationMultiline, functionApplicationMultilineWithFirstArg, ifStatement, infixPipeLeft, infixPipeLeft2, lambda, lambdaWithMultilinePattern, letStatement, list, listWithCommentedOutItems, literal, operator, parens, record, recordAccess, recordAccessfunction, recordUpdate, recordUpdateWithCommentedOutFields, recordWithCommentedOutFields, tuple, tupleFunction, tupleWithCommentedOutItems, unary, unit, var)
+module AllSyntax.Expressions exposing (..)
+
+import Foo
 
 
 unit =
@@ -247,6 +249,7 @@ recordAccess f a b r =
     , { x = 1 }.x
     , { r | x = 1 }.x
     , a.x.y
+    , Foo.record.x
     )
 
 
