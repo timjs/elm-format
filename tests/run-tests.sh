@@ -18,11 +18,11 @@ if command -v shellcheck; then
 	shellcheck "./package/linux/build-package.sh" || exit 1
 fi
 
-if command -v nix-env; then
-	echo "$0: INFO: Detected Nixos or Nix"
-	STACK_ARGS=(--nix-pure --nix-add-gc-roots)
-	echo "$0: INFO: nix arguments will be passed to stack: ${STACK_ARGS[*]}"
-fi
+# if command -v nix-env; then
+# 	echo "$0: INFO: Detected Nixos or Nix"
+# 	STACK_ARGS=(--nix-pure --nix-add-gc-roots)
+# 	echo "$0: INFO: nix arguments will be passed to stack: ${STACK_ARGS[*]}"
+# fi
 
 stack "${STACK_ARGS[@]}" build || exit 1
 
@@ -282,12 +282,8 @@ function checkValidationOutputFormat() {
 	echo
 
 	echo "## with unformatted files outputs in expected json format"
-	"$ELM_FORMAT" "$INPUT" "$INPUT_2" --validate | sed -e "s/$(git describe --abbrev=8 --always)/<version>/" | tee "$OUTPUT"
+	"$ELM_FORMAT" "$INPUT" "$INPUT_2" --validate | sed -e "s/ elm-format-[-.0-9a-z]* / elm-format-<version> /" | tee "$OUTPUT"
 	compareFiles tests/test-files/validate1.json "$OUTPUT"
-
-	echo "## with invalid files outputs in expected json format"
-	"$ELM_FORMAT" "tests/test-files/bad/Empty.elm" --validate | tee "$OUTPUT"
-	compareFiles tests/test-files/bad/Empty.validate.json "$OUTPUT"
 
 	echo "## with formatted file with output in json outputs empty list"
 	"$ELM_FORMAT" "$INPUT" "$INPUT_2" --yes > /dev/null
@@ -298,6 +294,17 @@ function checkValidationOutputFormat() {
 	echo "------------------------------"
 }
 
+function checkJson() {
+	INPUT="tests/test-files/$1"
+	OUTPUT="formatted.json"
+	EXPECTED="tests/test-files/${1%.*}.json"
+
+	echo
+	echo "## ${1%.*}.json"
+	time cat "$INPUT" | "$ELM_FORMAT" --stdin --json | python -mjson.tool | tr -d '\015' > "$OUTPUT"
+	returnCodeShouldEqual 0
+	compareFiles "$EXPECTED" "$OUTPUT"
+}
 
 echo
 echo
@@ -326,6 +333,8 @@ checkUpgrade 0.19 Elm-0.19/OpenExplicitConstructorImports.elm
 checkGood 0.18 Simple.elm
 checkGood 0.18 AllSyntax/0.18/AllSyntax.elm
 checkGoodAllSyntax 0.18 Module
+checkGood 0.18 AllSyntax/0.18/ModuleMultiline.elm
+checkGood 0.18 AllSyntax/0.18/ModuleWithDocs.elm
 checkGood 0.18 AllSyntax/0.18/Declarations.elm
 checkGoodAllSyntax 0.18 Patterns
 checkGoodAllSyntax 0.18 Types
@@ -375,7 +384,6 @@ checkGood 0.17 elm-lang/examples/websockets.elm
 checkGood 0.17 elm-lang/examples/Spelling.elm
 checkGood 0.17 elm-lang/websocket/WebSocket.elm
 
-checkBad Empty.elm
 checkBad UnexpectedComma.elm
 checkBad UnexpectedEndOfInput.elm
 
@@ -395,6 +403,7 @@ checkTransformation 0.18 DocCommentCheapskateReferenceBug.elm
 checkTransformation 0.18 DocCommentAtDocs.elm
 checkTransformation 0.18 Sorting.elm
 checkTransformation 0.18 UnnecessaryParens.elm
+checkTransformation 0.18 Empty.elm
 checkUpgrade 0.18 Elm-0.18/PrimesBecomeUnderscores.elm
 checkUpgrade 0.18 Elm-0.18/RangesBecomeListRange.elm
 checkUpgrade 0.18 Elm-0.18/BackticksBecomeFunctionCalls.elm
@@ -402,6 +411,11 @@ checkUpgrade 0.18 Elm-0.18/SpecialBackticksBecomePipelines.elm
 checkUpgrade 0.18 Elm-0.18/RenameTupleFunctions.elm
 
 checkValidationOutputFormat
+
+checkJson good/AllSyntax/0.18/Module.elm
+checkJson good/AllSyntax/0.18/Expressions.elm
+checkJson good/AllSyntax/0.18/Literals.elm
+checkJson good/json/ExternalReferences.elm
 
 echo
 echo "# GREAT SUCCESS!"

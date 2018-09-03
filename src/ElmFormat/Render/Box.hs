@@ -7,6 +7,7 @@ import ElmVersion (ElmVersion(..))
 
 import qualified AST.V0_16 as AST
 import AST.V0_16 (UppercaseIdentifier(..), LowercaseIdentifier(..), SymbolIdentifier(..), WithEol)
+import AST.Declaration (TopLevelStructure, Declaration)
 import qualified AST.Declaration
 import qualified AST.Expression
 import qualified AST.Module
@@ -127,7 +128,7 @@ data DeclarationType
   deriving (Show)
 
 
-declarationType :: (a -> BodyEntryType) -> AST.Declaration.TopLevelStructure a -> DeclarationType
+declarationType :: (a -> BodyEntryType) -> TopLevelStructure a -> DeclarationType
 declarationType entryType decl =
   case decl of
     AST.Declaration.Entry entry ->
@@ -149,12 +150,12 @@ declarationType entryType decl =
       DComment
 
 
-sortVars :: Set (AST.Commented AST.Variable.Value) -> [[AST.Variable.Ref]] -> Set AST.Variable.Value -> ([[AST.Commented AST.Variable.Value]], AST.Comments)
-sortVars fromExposing fromDocs fromModule =
+sortVars :: Bool -> Set (AST.Commented AST.Variable.Value) -> [[AST.Variable.Ref]] -> Set AST.Variable.Value -> ([[AST.Commented AST.Variable.Value]], AST.Comments)
+sortVars forceMultiline fromExposing fromDocs fromModule =
     let
-        refToValue (AST.Variable.VarRef _ name) = AST.Commented [] (AST.Variable.Value name) []
-        refToValue (AST.Variable.TagRef _ name) = AST.Commented [] (AST.Variable.Union (name, []) AST.Variable.ClosedListing) []
-        refToValue (AST.Variable.OpRef name) = AST.Commented [] (AST.Variable.OpValue name) []
+        refName (AST.Variable.VarRef _ (LowercaseIdentifier name)) = name
+        refName (AST.Variable.TagRef _ (UppercaseIdentifier name)) = name
+        refName (AST.Variable.OpRef (SymbolIdentifier name)) = name
 
         varOrder :: AST.Commented AST.Variable.Value -> (Int, String)
         varOrder (AST.Commented _ (AST.Variable.OpValue (SymbolIdentifier name)) _) = (1, name)
@@ -163,9 +164,9 @@ sortVars fromExposing fromDocs fromModule =
 
         listedInDocs =
             fromDocs
-                |> fmap (Maybe.mapMaybe (\v -> Map.lookup (varName $ refToValue v) allowedInDocs))
-                |> fmap (fmap (\v -> AST.Commented [] v []))
+                |> fmap (Maybe.mapMaybe (\v -> Map.lookup (refName v) allowedInDocs))
                 |> filter (not . List.null)
+                |> fmap (fmap (\v -> AST.Commented [] v []))
 
         listedInExposing =
             fromExposing
@@ -176,12 +177,15 @@ sortVars fromExposing fromDocs fromModule =
         varName (AST.Commented _ (AST.Variable.OpValue (SymbolIdentifier name)) _) = name
         varName (AST.Commented _ (AST.Variable.Union (UppercaseIdentifier name, _) _) _) = name
 
-        allowedInDocs =
-            fromExposing
-                |> Set.union (Set.map (\v -> AST.Commented [] v []) fromModule)
-                |> Set.toList
+        varSetToMap set =
+            Set.toList set
                 |> fmap (\(AST.Commented pre var post)-> (varName (AST.Commented pre var post), var))
                 |> Map.fromList
+
+        allowedInDocs =
+            Map.union
+                (varSetToMap fromExposing)
+                (varSetToMap $ Set.map (\v -> AST.Commented [] v []) fromModule)
 
         allFromDocs =
             Set.fromList $ fmap varName $ concat listedInDocs
@@ -192,10 +196,6 @@ sortVars fromExposing fromDocs fromModule =
         remainingFromExposing =
             listedInExposing
                 |> filter (not . inDocs)
-                |> (\x -> if List.null x then [] else [x])
-
-        listedByUser =
-            listedInDocs ++ remainingFromExposing
 
         commentsFromReorderedVars =
             listedInExposing
@@ -203,9 +203,11 @@ sortVars fromExposing fromDocs fromModule =
                 |> fmap (\(AST.Commented pre _ post) -> pre ++ post)
                 |> concat
     in
-    case (List.null $ concat listedByUser) of
+    case (List.null $ concat listedInDocs) && (List.null remainingFromExposing) of
         False ->
-            ( listedByUser, commentsFromReorderedVars )
+            if List.null listedInDocs && forceMultiline
+                then ( fmap (\x -> [x]) remainingFromExposing, commentsFromReorderedVars )
+                else ( listedInDocs ++ if List.null remainingFromExposing then [] else [ remainingFromExposing ], commentsFromReorderedVars )
 
         True ->
             -- we have no exposing, and no docs; use from module
@@ -265,13 +267,18 @@ formatModuleHeader elmVersion modu =
               , Map.assocs types |> fmap (\(name, AST.Commented pre (preListing, listing) post) -> AST.Commented pre (AST.Variable.Union (name, preListing) listing) post) |> Set.fromList
               ]
 
+      detailedListingIsMultiline :: AST.Variable.Listing a -> Bool
+      detailedListingIsMultiline (AST.Variable.ExplicitListing _ isMultiline) = isMultiline
+      detailedListingIsMultiline _ = False
+
       varsToExpose =
           sortVars
+              (detailedListingIsMultiline exportsList)
               (detailedListingToSet exportsList)
               documentedVars
               definedVars
 
-      extractVarName :: AST.Declaration.TopLevelStructure AST.Declaration.Declaration -> [AST.Variable.Value]
+      extractVarName :: TopLevelStructure Declaration -> [AST.Variable.Value]
       extractVarName decl =
           case decl of
               AST.Declaration.DocComment _ -> []
@@ -454,8 +461,8 @@ formatModuleLine elmVersion (varsToExpose, extraComments) header =
       [ exports ]
 
 
-formatModule :: ElmVersion -> AST.Module.Module -> Box
-formatModule elmVersion modu =
+formatModule :: ElmVersion -> Bool -> Int -> AST.Module.Module -> Box
+formatModule elmVersion showModuleLine spacing modu =
     let
         initialComments' =
           case AST.Module.initialComments modu of
@@ -468,15 +475,17 @@ formatModule elmVersion modu =
         spaceBeforeBody =
             case AST.Module.body modu of
                 [] -> 0
-                AST.Declaration.BodyComment _ : _ -> 3
-                _ -> 2
+                AST.Declaration.BodyComment _ : _ -> spacing + 1
+                _ -> spacing
     in
       stack1 $
           concat
               [ initialComments'
-              , [ formatModuleHeader elmVersion modu ]
+              , if showModuleLine
+                    then [ formatModuleHeader elmVersion modu ]
+                    else formatImports elmVersion modu
               , List.replicate spaceBeforeBody blankLine
-              , maybeToList (formatModuleBody 2 elmVersion modu)
+              , maybeToList $ formatModuleBody spacing elmVersion (makeImportInfo modu) (AST.Module.body modu)
               ]
 
 
@@ -541,8 +550,8 @@ makeImportInfo modu =
     ImportInfo exposed aliases
 
 
-formatModuleBody :: Int -> ElmVersion -> AST.Module.Module -> Maybe Box
-formatModuleBody linesBetween elmVersion modu =
+formatModuleBody :: Int -> ElmVersion -> ImportInfo -> [TopLevelStructure Declaration] -> Maybe Box
+formatModuleBody linesBetween elmVersion importInfo body =
     let
         entryType adecl =
             case adecl of
@@ -578,7 +587,7 @@ formatModuleBody linesBetween elmVersion modu =
                 AST.Declaration.Fixity_0_19 _ _ _ _ ->
                     BodyFixity
     in
-    formatTopLevelBody linesBetween elmVersion (makeImportInfo modu) entryType (formatDeclaration elmVersion (makeImportInfo modu)) (AST.Module.body modu)
+    formatTopLevelBody linesBetween elmVersion importInfo entryType (formatDeclaration elmVersion importInfo) body
 
 
 data BodyEntryType
@@ -593,7 +602,7 @@ formatTopLevelBody ::
     -> ImportInfo
     -> (a -> BodyEntryType)
     -> (a -> Box)
-    -> [AST.Declaration.TopLevelStructure a]
+    -> [TopLevelStructure a]
     -> Maybe Box
 formatTopLevelBody linesBetween elmVersion importInfo entryType formatEntry body =
     let
@@ -606,6 +615,7 @@ formatTopLevelBody linesBetween elmVersion importInfo entryType formatEntry body
                 (_, DCloser) -> 0
                 (DComment, DComment) -> 0
                 (_, DComment) -> linesBetween + 1
+                (DComment, DDefinition _) -> if linesBetween == 1 then 0 else linesBetween
                 (DComment, _) -> linesBetween
                 (DDocComment, DDefinition _) -> 0
                 (DDefinition Nothing, DDefinition (Just _)) -> linesBetween
@@ -633,8 +643,9 @@ formatTopLevelBody linesBetween elmVersion importInfo entryType formatEntry body
 
 
 data ElmCodeBlock
-    = ModuleCode AST.Module.Module
-    | ExpressionsCode [AST.Declaration.TopLevelStructure (WithEol AST.Expression.Expr)]
+    = DeclarationsCode [TopLevelStructure Declaration]
+    | ExpressionsCode [TopLevelStructure (WithEol AST.Expression.Expr)]
+    | ModuleCode AST.Module.Module
     deriving (Show)
 
 
@@ -656,15 +667,22 @@ formatModuleDocs elmVersion importInfo blocks =
         parse source =
             source
                 |> firstOf
-                    [ fmap ModuleCode . Result.toMaybe . Parse.parseModule
+                    [ fmap DeclarationsCode . Result.toMaybe . Parse.parseDeclarations
                     , fmap ExpressionsCode . Result.toMaybe . Parse.parseExpressions
+                    , fmap ModuleCode . Result.toMaybe . Parse.parseModule
                     ]
 
         format :: ElmCodeBlock -> String
         format result =
             case result of
                 ModuleCode modu ->
-                    formatModuleCode modu
+                    formatModule elmVersion False 1 modu
+                        |> (Text.unpack . Box.render)
+
+                DeclarationsCode declarations ->
+                    formatModuleBody 1 elmVersion importInfo declarations
+                        |> fmap (Text.unpack . Box.render)
+                        |> fromMaybe ""
 
                 ExpressionsCode expressions ->
                     let
@@ -674,24 +692,6 @@ formatModuleDocs elmVersion importInfo blocks =
                         |> formatTopLevelBody 1 elmVersion importInfo entryType (formatEolCommented $ formatExpression elmVersion importInfo SyntaxSeparated)
                         |> fmap (Text.unpack . Box.render)
                         |> fromMaybe ""
-
-        formatModuleCode :: AST.Module.Module -> String
-        formatModuleCode modu =
-            let
-                box =
-                    case
-                        ( formatImports elmVersion modu
-                        , formatModuleBody 1 elmVersion modu
-                        )
-                    of
-                        ( [], Nothing ) -> Nothing
-                        ( imports, Nothing ) -> Just $ stack1 imports
-                        ( [], Just body) -> Just body
-                        ( imports, Just body ) -> Just $ stack1 (imports ++ [blankLine, body])
-            in
-                box
-                    |> fmap (Text.unpack . Box.render)
-                    |> fromMaybe ""
 
         content :: String
         content =
@@ -961,7 +961,7 @@ formatVarValue elmVersion aval =
                     name'
 
 
-formatTopLevelStructure :: ElmVersion -> ImportInfo -> (a -> Box) -> AST.Declaration.TopLevelStructure a -> Box
+formatTopLevelStructure :: ElmVersion -> ImportInfo -> (a -> Box) -> TopLevelStructure a -> Box
 formatTopLevelStructure elmVersion importInfo formatEntry topLevelStructure =
     case topLevelStructure of
         AST.Declaration.DocComment docs ->
@@ -974,7 +974,7 @@ formatTopLevelStructure elmVersion importInfo formatEntry topLevelStructure =
             formatEntry (RA.drop entry)
 
 
-formatDeclaration :: ElmVersion -> ImportInfo -> AST.Declaration.Declaration -> Box
+formatDeclaration :: ElmVersion -> ImportInfo -> Declaration -> Box
 formatDeclaration elmVersion importInfo decl =
     case decl of
         AST.Declaration.Definition name args comments expr ->
