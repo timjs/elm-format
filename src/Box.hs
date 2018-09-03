@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wall #-}
 module Box
-  ( Line, identifier, keyword, punc, literal, row, space
+  ( Line, identifier, keyword, punc, literal, row, space, isSingleWord
   , Box(SingleLine, MustBreak), blankLine, line, mustBreak, stack', stack1, andThen
   , isLine, allSingles, lineLength
   , indent, prefix, addSuffix
@@ -9,6 +9,7 @@ module Box
 
 import Elm.Utils ((|>))
 
+import qualified Data.Char as C
 import qualified Data.Text as T
 
 
@@ -56,6 +57,13 @@ row =
 space :: Line
 space =
     Space
+
+
+isSingleWord :: Line -> Bool
+isSingleWord l =
+    case l of
+        Text t -> maybe True (const False) $ T.find C.isSpace t
+        _ -> False
 
 
 {-
