@@ -1466,16 +1466,14 @@ formatExpression' elmVersion importInfo context aexpr =
                       , formatHeadCommentedStack (formatExpression elmVersion importInfo SyntaxSeparated) expr
                       )
                     of
-                        --NOTE: Only allow oneliners when pattern consists of just one word (same rule as for declarations)
                         (_, _, SingleLine pat', body@(SingleLine body')) ->
-                            if isSingleWord pat' then
-                                line $ row [ pat', space, keyword "->", space, body' ]
-                            else
-                                --NOTE: Same as multiline below
-                                stack1
-                                    [ line $ row [ pat', space, keyword "->"]
-                                    , indent body
-                                    ]
+                            if lineLength 0 body' <= lineLength 0 pat' then
+                              line $ row [ pat', space, keyword "->", space, body' ]
+                            else --NOTE: Same as multiline below
+                              stack1
+                                [ line $ row [ pat', space, keyword "->"]
+                                , indent body
+                                ]
                         (_, _, SingleLine pat', body') ->
                             stack1
                                 [ line $ row [ pat', space, keyword "->"]
