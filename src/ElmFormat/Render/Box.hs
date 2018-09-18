@@ -1456,28 +1456,43 @@ formatExpression' elmVersion importInfo context aexpr =
                               , line $ keyword "of"
                               ]
 
+                preformat pat expr =
+                    ( formatCommentedStack (formatPattern elmVersion False) pat
+                        |> negativeCasePatternWorkaround pat
+                    , formatHeadCommentedStack (formatExpression elmVersion importInfo SyntaxSeparated) expr
+                    )
+
+                isOneliner (pat, expr) =
+                    case preformat pat expr of
+                        (SingleLine _, SingleLine _) -> True
+                        _ -> False
+
+                allOneliners =
+                    all isOneliner clauses
+
                 clause (pat, expr) =
                     case
-                      ( pat
+                      ( allOneliners
+                      , pat
                       , (formatPattern elmVersion False $ (\(AST.Commented _ x _) -> x) pat)
                           |> negativeCasePatternWorkaround pat
-                      , formatCommentedStack (formatPattern elmVersion False) pat
-                          |> negativeCasePatternWorkaround pat
-                      , formatHeadCommentedStack (formatExpression elmVersion importInfo SyntaxSeparated) expr
+                      , preformat pat expr
                       )
                     of
-                        (_, _, SingleLine pat', body') ->
+                        (True, _, _, (SingleLine pat', SingleLine body')) ->
+                             line $ row [ pat', space, keyword "->", space, body' ]
+                        (_, _, _, (SingleLine pat', body')) ->
                             stack1
                                 [ line $ row [ pat', space, keyword "->"]
                                 , indent body'
                                 ]
-                        (AST.Commented pre _ [], SingleLine pat', _, body') ->
+                        (_, AST.Commented pre _ [], SingleLine pat', (_, body')) ->
                             stack1 $
                                 (map formatComment pre)
                                 ++ [ line $ row [ pat', space, keyword "->"]
                                    , indent body'
                                    ]
-                        (_, _, pat', body') ->
+                        (_, _, _, (pat', body')) ->
                             stack1 $
                               [ pat'
                               , line $ keyword "->"
